@@ -1,0 +1,31 @@
+{
+  "name": "e2e-encrypted-chat",
+  "version": "1.0.0",
+  "description": "End-to-End Encrypted Chat Application với Web Crypto API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "chat",
+    "encryption",
+    "e2e",
+    "web-crypto",
+    "socket.io"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "express-session": "^1.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.19.3",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
