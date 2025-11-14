@@ -1,0 +1,233 @@
+﻿<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <title>VaultChat · E2E Messenger</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-theme="dark">
+    <div class="dynamic-background" aria-hidden="true">
+        <div class="glow glow-1"></div>
+        <div class="glow glow-2"></div>
+        <div class="grid-overlay"></div>
+    </div>
+
+    <main class="app-frame">
+        <!-- AUTH VIEW -->
+        <section id="authView" class="view login-view">
+            <div class="login-card glass-surface">
+                <div class="login-hero">
+                    <div class="badge-inline">
+                        <span class="icon">💬</span>
+                        <span>Chat An Toàn</span>
+                    </div>
+                    <h1 class="login-title">VaultChat</h1>
+                    <p class="login-subtitle">
+                        Trò chuyện riêng tư, an toàn và bảo mật. Chat mọi lúc, mọi nơi.
+                    </p>
+                    <ul class="login-points">
+                        <li>Tin nhắn được mã hóa đầu-cuối</li>
+                        <li>Lưu trữ an toàn trên máy chủ</li>
+                        <li>Trạng thái trực tuyến, gõ phím và thông báo</li>
+                    </ul>
+                </div>
+
+                <!-- Đăng nhập Form -->
+                <form id="loginForm" class="login-form">
+                    <h3 style="margin-bottom: 1rem; text-align: center;">Đăng nhập</h3>
+                    <label class="form-field">
+                        <span class="field-label">Tên đăng nhập</span>
+                        <input id="loginUsernameInput" type="text" autocomplete="username" placeholder="Nhập tên đăng nhập">
+                    </label>
+                    <label class="form-field">
+                        <span class="field-label">Mật khẩu</span>
+                        <input id="loginPasswordInput" type="password" autocomplete="current-password" placeholder="Nhập mật khẩu">
+                    </label>
+                    <button id="loginBtn" type="submit" class="btn primary" disabled>
+                        <span class="btn-label">Đăng nhập</span>
+                        <span class="btn-spinner" aria-hidden="true"></span>
+                    </button>
+                    <p id="loginStatusText" class="login-status" role="status"></p>
+                    <p style="text-align: center; margin-top: 1rem;">
+                        Chưa có tài khoản? 
+                        <a href="#" id="showRegisterLink" style="color: #60a5fa; cursor: pointer;">Đăng ký ngay</a>
+                    </p>
+                </form>
+
+                <!-- Đăng ký Form -->
+                <form id="registerForm" class="login-form hidden">
+                    <h3 style="margin-bottom: 1rem; text-align: center;">Đăng ký</h3>
+                    <label class="form-field">
+                        <span class="field-label">Tên đăng nhập</span>
+                        <input id="registerUsernameInput" type="text" autocomplete="username" placeholder="3-20 ký tự, chỉ chữ, số, _, -, .">
+                        <small style="font-size: 0.75rem; color: #9ca3af; margin-top: 0.25rem; display: block;">
+                            Tên đăng nhập phải từ 3-20 ký tự, chỉ chứa chữ cái, số, dấu gạch dưới, gạch ngang và dấu chấm
+                        </small>
+                    </label>
+                    <label class="form-field">
+                        <span class="field-label">Mật khẩu</span>
+                        <input id="registerPasswordInput" type="password" autocomplete="new-password" placeholder="Tối thiểu 6 ký tự">
+                    </label>
+                    <label class="form-field">
+                        <span class="field-label">Xác nhận mật khẩu</span>
+                        <input id="registerConfirmPasswordInput" type="password" autocomplete="new-password" placeholder="Nhập lại mật khẩu">
+                    </label>
+                    <button id="registerBtn" type="submit" class="btn primary" disabled>
+                        <span class="btn-label">Đăng ký</span>
+                        <span class="btn-spinner" aria-hidden="true"></span>
+                    </button>
+                    <p id="registerStatusText" class="login-status" role="status"></p>
+                    <p style="text-align: center; margin-top: 1rem;">
+                        Đã có tài khoản? 
+                        <a href="#" id="showLoginLink" style="color: #60a5fa; cursor: pointer;">Đăng nhập</a>
+                    </p>
+                </form>
+            </div>
+        </section>
+
+        <!-- CHAT SETUP VIEW (sau khi đăng nhập) -->
+        <section id="setupView" class="view login-view hidden">
+            <div class="login-card glass-surface">
+                <div class="login-hero">
+                    <h1 class="login-title">Thiết lập tên hiển thị</h1>
+                    <p class="login-subtitle">
+                        Chọn tên hiển thị để bắt đầu trò chuyện. Tên này sẽ hiển thị cho người khác.
+                    </p>
+                </div>
+
+                <form id="setupForm" class="login-form">
+                    <label class="form-field">
+                        <span class="field-label">Tên hiển thị</span>
+                        <input id="displayNameInput" type="text" autocomplete="off" placeholder="Ví dụ: Alice">
+                    </label>
+                    <button id="setupBtn" type="submit" class="btn primary" disabled>
+                        <span class="btn-label">Bắt đầu chat</span>
+                        <span class="btn-spinner" aria-hidden="true"></span>
+                    </button>
+                    <p id="setupStatusText" class="login-status" role="status"></p>
+                </form>
+            </div>
+        </section>
+
+        <!-- CHAT VIEW -->
+        <section id="chatView" class="view chat-view hidden">
+            <header class="top-bar glass-surface">
+                    <div class="brand-block">
+                        <div class="brand-logo">💬</div>
+                        <div>
+                            <h2 class="brand-name">VaultChat</h2>
+                            <p class="brand-tagline">Trò chuyện an toàn • Mọi lúc mọi nơi</p>
+                        </div>
+                    </div>
+
+                <div class="top-actions">
+                    <div class="action-pill">
+                        <span class="dot pulse" id="connectionDot"></span>
+                        <span id="connectionStatus" class="connection-copy">Chưa kết nối</span>
+                    </div>
+
+
+                    <label class="theme-toggle" title="Đổi chủ đề">
+                        <input id="themeToggle" type="checkbox" aria-label="Bật chế độ tối">
+                        <span class="toggle-rail"></span>
+                        <span class="toggle-icons">
+                            <span class="icon sun">☀️</span>
+                            <span class="icon moon">🌙</span>
+                        </span>
+                    </label>
+
+                    <button id="logoutBtn" class="btn ghost" type="button">Đăng xuất</button>
+                </div>
+            </header>
+
+            <div class="layout-grid">
+                <!-- CONTACTS -->
+                <aside class="pane contacts glass-surface">
+                    <div class="profile-card">
+                        <div id="currentUserAvatar" class="profile-avatar">?</div>
+                        <div>
+                            <p class="profile-hello">Xin chào</p>
+                            <h3 id="currentUserLabel" class="profile-name">...</h3>
+                        </div>
+                    </div>
+
+                    <div class="contacts-header">
+                        <h4>Đang online <span id="onlineCountBadge" class="count-badge">0</span></h4>
+                        <div class="search-field">
+                            <span class="icon">🔍</span>
+                            <input id="userFilterInput" type="search" placeholder="Tìm kiếm người dùng...">
+                        </div>
+                    </div>
+
+                    <div id="userList" class="contact-list" role="listbox" aria-label="Danh sách người dùng"></div>
+                    <div id="userListEmpty" class="contact-empty hidden">
+                        Chưa có ai online. Hãy mời bạn bè cùng tham gia.
+                    </div>
+                </aside>
+
+                <!-- CONVERSATION -->
+                <section class="pane conversation glass-surface">
+                    <header class="conversation-header">
+                        <div>
+                            <p class="conversation-label">Đang trò chuyện với</p>
+                            <h2 id="chatWithName" class="conversation-title">@Chưa chọn</h2>
+                        </div>
+                        <div class="conversation-meta">
+                            <span id="lastSeenLabel" class="conversation-lastseen">—</span>
+                        </div>
+                    </header>
+
+                    <div id="conversationEmpty" class="conversation-empty">
+                        Hãy chọn một người dùng bên trái để bắt đầu cuộc trò chuyện riêng tư. Khóa sẽ được trao đổi tự động.
+                    </div>
+
+                    <div id="messagesContainer" class="message-list" aria-live="polite"></div>
+                    <div id="typingStatus" class="typing-indicator"></div>
+
+                    <footer class="composer">
+                        <div class="composer-meta">
+                            <span id="messageCountLabel">0 tin nhắn</span>
+                        </div>
+                        <div class="composer-form">
+                            <textarea id="messageInput" rows="1" placeholder="Nhập tin nhắn bảo mật..."></textarea>
+                            <button id="sendBtn" class="btn primary" type="button" disabled>
+                                <span>Gửi</span>
+                                <span class="icon">➡️</span>
+                            </button>
+                        </div>
+                    </footer>
+                </section>
+
+                <!-- INSIGHTS -->
+                <aside class="pane insights glass-surface">
+                    <div class="insight-card">
+                        <h4>Danh bạ</h4>
+                        <div id="contactsList" class="contact-list">
+                            <p class="activity-placeholder">Chưa có danh bạ.</p>
+                        </div>
+                    </div>
+
+                    <div class="insight-card">
+                        <h4>Hoạt động gần đây</h4>
+                        <div id="activityFeed" class="activity-feed">
+                            <p class="activity-placeholder">Chưa có hoạt động.</p>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+        </section>
+    </main>
+
+    <div id="toastContainer" class="toast-stack" aria-live="assertive"></div>
+
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="crypto-utils.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
