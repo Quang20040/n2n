@@ -150,10 +150,11 @@
                 <aside class="pane contacts glass-surface">
                     <div class="profile-card">
                         <div id="currentUserAvatar" class="profile-avatar">?</div>
-                        <div>
+                        <div style="flex: 1;">
                             <p class="profile-hello">Xin chào</p>
                             <h3 id="currentUserLabel" class="profile-name">...</h3>
                         </div>
+                        <button id="changeDisplayNameBtn" class="btn ghost" type="button" style="font-size: 12px; padding: 4px 8px;" title="Đổi tên hiển thị">✏️</button>
                     </div>
 
                     <div class="contacts-header">
@@ -167,6 +168,15 @@
                     <div id="userList" class="contact-list" role="listbox" aria-label="Danh sách người dùng"></div>
                     <div id="userListEmpty" class="contact-empty hidden">
                         Chưa có ai online. Hãy mời bạn bè cùng tham gia.
+                    </div>
+
+                    <div class="contacts-header" style="margin-top: 24px; padding-top: 24px; border-top: 1px solid rgba(148, 163, 184, 0.18);">
+                        <h4>Danh bạ</h4>
+                    </div>
+
+                    <div id="recentContactsList" class="contact-list" role="listbox" aria-label="Danh sách liên hệ"></div>
+                    <div id="recentContactsEmpty" class="contact-empty hidden">
+                        Chưa có liên hệ nào.
                     </div>
                 </aside>
 

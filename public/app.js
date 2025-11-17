@@ -8,6 +8,7 @@ let usersOnline = [];
 const conversations = new Map(); // username -> message[]
 const unreadCounts = new Map(); // username -> number
 const activityLog = [];
+const userDisplayNames = new Map(); // username -> displayName
 
 const MAX_ACTIVITY_ITEMS = 30;
 const TOAST_DURATION = 4200;
@@ -51,6 +52,8 @@ const userList = document.getElementById("userList");
 const userListEmpty = document.getElementById("userListEmpty");
 const onlineCountBadge = document.getElementById("onlineCountBadge");
 const contactsList = document.getElementById("contactsList");
+const recentContactsList = document.getElementById("recentContactsList");
+const recentContactsEmpty = document.getElementById("recentContactsEmpty");
 
 const chatWithName = document.getElementById("chatWithName");
 const lastSeenLabel = document.getElementById("lastSeenLabel");
@@ -64,6 +67,7 @@ const sendBtn = document.getElementById("sendBtn");
 
 const connectionStatus = document.getElementById("connectionStatus");
 const connectionDot = document.getElementById("connectionDot");
+const changeDisplayNameBtn = document.getElementById("changeDisplayNameBtn");
 
 const themeToggle = document.getElementById("themeToggle");
 
@@ -97,7 +101,12 @@ let loggedInUser = null;
             if (response.ok) {
                 const data = await response.json();
                 loggedInUser = data.user;
-                // Đã đăng nhập, hiển thị setup view
+                // Nếu đã có display name, tự động đăng nhập vào chat
+                if (data.user.displayName) {
+                    await autoLoginWithDisplayName(data.user.displayName);
+                    return;
+                }
+                // Chưa có display name, hiển thị setup view
                 authView.classList.add("hidden");
                 setupView.classList.remove("hidden");
                 return;
@@ -161,6 +170,15 @@ function bindUIEvents() {
         logoutBtn.addEventListener("click", () => {
             localStorage.removeItem(AUTH_TOKEN_KEY);
             location.reload();
+        });
+    }
+
+    if (changeDisplayNameBtn) {
+        changeDisplayNameBtn.addEventListener("click", () => {
+            const newDisplayName = prompt("Nhập tên hiển thị mới:", loggedInUser?.displayName || currentUserLabel.textContent);
+            if (newDisplayName && newDisplayName.trim()) {
+                updateDisplayName(newDisplayName.trim());
+            }
         });
     }
 
@@ -360,9 +378,17 @@ async function handleSetupSubmit(event) {
             reconnectionAttempts: 5
         });
 
+        setupSocketHandlers();
+        
         socket.on("connect", () => {
             setConnectionState(true, "Đã kết nối");
-            socket.emit("join", { username: currentUser, publicKey });
+            // Lưu display name lên server
+            saveDisplayNameToServer(displayName).then(() => {
+                socket.emit("join", { username: currentUser, publicKey, displayName });
+            }).catch(err => {
+                console.error("Lỗi lưu display name:", err);
+                socket.emit("join", { username: currentUser, publicKey, displayName });
+            });
             pushActivity("Đã kết nối tới máy chủ bảo mật.");
         });
 
@@ -377,67 +403,6 @@ async function handleSetupSubmit(event) {
             showToast("Kết nối thất bại", "Không thể kết nối đến máy chủ. Thử lại sau.", "error");
         });
 
-        socket.on("users", async payload => {
-            const changes = await syncPublicKeys(payload);
-            usersOnline = payload;
-            renderUserList();
-            updateOnlineCount();
-            updatePresenceMeta();
-            handleKeyChanges(changes);
-        });
-
-        socket.on("dm", handleIncomingMessage);
-        socket.on("dm:ack", handleMessageAck);
-        
-        // Lấy lịch sử từ server
-        socket.on("history", ({ conversationId, messages }) => {
-            if (!selectedUser) return;
-            const conversation = getConversation(selectedUser);
-            // Chỉ thêm tin nhắn chưa có
-            messages.forEach(msg => {
-                if (!conversation.find(m => m.id === msg.messageId)) {
-                    // Giải mã tin nhắn
-                    cryptoUtils.decryptMessage(msg.encryptedMessage)
-                        .then(text => {
-                            const message = {
-                                id: msg.messageId,
-                                author: msg.from,
-                                text,
-                                timestamp: new Date(msg.timestamp).getTime(),
-                                inbound: msg.from.toLowerCase() !== currentUser.toLowerCase(),
-                                status: msg.status || "delivered"
-                            };
-                            conversation.push(message);
-                            conversation.sort((a, b) => a.timestamp - b.timestamp);
-                            if (selectedUser === getActiveConversation()) {
-                                renderConversation(selectedUser);
-                            }
-                        })
-                        .catch(err => console.error("Lỗi giải mã tin nhắn lịch sử:", err));
-                }
-            });
-        });
-        
-        // Nhận danh bạ
-        socket.on("contacts", ({ contacts: contactsData }) => {
-            contacts.clear();
-            contactsData.forEach(contact => {
-                contacts.set(contact.contactUsername, contact);
-            });
-            renderContactsList();
-        });
-        
-        socket.on("contact:added", ({ contact }) => {
-            contacts.set(contact.contactUsername, contact);
-            renderContactsList();
-        });
-        socket.on("typing", ({ from }) => {
-            if (from === selectedUser) typingStatus.textContent = `${from} đang nhập...`;
-        });
-        socket.on("stopTyping", ({ from }) => {
-            if (from === selectedUser) typingStatus.textContent = "";
-        });
-
         setupView.classList.add("hidden");
         chatView.classList.remove("hidden");
         messageInput.focus();
@@ -446,9 +411,10 @@ async function handleSetupSubmit(event) {
         // Tải danh bạ
         socket.emit("get:contacts", { username: currentUser });
         
-        // Render user list
+        // Render user list và contacts
         try {
             renderUserList();
+            renderRecentContacts();
         } catch (renderError) {
             console.warn("Lỗi khi render user list:", renderError);
         }
@@ -475,6 +441,212 @@ function setConnectionState(isConnected, label) {
 function updateIdentityUI(username) {
     currentUserLabel.textContent = username;
     currentUserAvatar.textContent = username.charAt(0).toUpperCase();
+}
+
+// Tự động đăng nhập với display name đã lưu
+async function autoLoginWithDisplayName(displayName) {
+    if (!loggedInUser) return;
+    
+    currentUser = loggedInUser.username;
+    
+    // Đảm bảo crypto đã sẵn sàng
+    await cryptoUtils.ensureReady();
+    
+    let publicKey;
+    try {
+        publicKey = await cryptoUtils.getPublicKeyJWK();
+    } catch (cryptoError) {
+        console.error("Lỗi khi lấy khóa:", cryptoError);
+        // Nếu lỗi, vẫn hiển thị setup view
+        authView.classList.add("hidden");
+        setupView.classList.remove("hidden");
+        return;
+    }
+    
+    updateIdentityUI(displayName || currentUser);
+    
+    // Tạo socket với timeout
+    socket = io({
+        timeout: 10000,
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionAttempts: 5
+    });
+    
+    setupSocketHandlers();
+    
+    socket.on("connect", () => {
+        setConnectionState(true, "Đã kết nối");
+        socket.emit("join", { username: currentUser, publicKey, displayName });
+        pushActivity("Đã kết nối tới máy chủ bảo mật.");
+    });
+    
+    socket.on("disconnect", () => {
+        setConnectionState(false, "Mất kết nối");
+        pushActivity("Kết nối bị gián đoạn.");
+    });
+    
+    socket.on("connect_error", error => {
+        console.error("Socket connect error", error);
+        setConnectionState(false, "Không thể kết nối");
+        showToast("Kết nối thất bại", "Không thể kết nối đến máy chủ. Thử lại sau.", "error");
+    });
+    
+    // Ẩn setup view, hiển thị chat view
+    setupView.classList.add("hidden");
+    authView.classList.add("hidden");
+    chatView.classList.remove("hidden");
+    messageInput.focus();
+    updateComposerState();
+    
+    // Tải danh bạ
+    socket.emit("get:contacts", { username: currentUser });
+    
+    // Render user list và contacts
+    try {
+        renderUserList();
+        renderRecentContacts();
+    } catch (renderError) {
+        console.warn("Lỗi khi render user list:", renderError);
+    }
+    
+    pushActivity(`Đăng nhập thành công dưới tên ${displayName || currentUser}.`);
+}
+
+// Thiết lập socket handlers (tách ra để tái sử dụng)
+function setupSocketHandlers() {
+    socket.on("users", async payload => {
+        const changes = await syncPublicKeys(payload);
+        usersOnline = payload;
+        // Lưu display names
+        payload.forEach(user => {
+            if (user.displayName) {
+                userDisplayNames.set(user.username, user.displayName);
+            }
+        });
+        renderUserList();
+        updateOnlineCount();
+        updatePresenceMeta();
+        handleKeyChanges(changes);
+        // Cập nhật chat header nếu đang có user được chọn
+        if (selectedUser) {
+            updateChatHeader(selectedUser);
+        }
+        // Cập nhật danh sách liên hệ
+        renderRecentContacts();
+    });
+    
+    socket.on("dm", handleIncomingMessage);
+    socket.on("dm:ack", handleMessageAck);
+    
+    // Lấy lịch sử từ server
+    socket.on("history", async ({ conversationId, messages }) => {
+        if (!selectedUser) return;
+        const conversation = getConversation(selectedUser);
+        // Chỉ thêm tin nhắn chưa có
+        for (const msg of messages) {
+            if (!conversation.find(m => m.id === msg.messageId)) {
+                // Xử lý giải mã tin nhắn
+                await handleHistoryMessage(msg, conversation);
+            }
+        }
+        // Cập nhật danh sách liên hệ sau khi load history
+        renderRecentContacts();
+    });
+    
+    // Nhận danh bạ
+    socket.on("contacts", ({ contacts: contactsData }) => {
+        contacts.clear();
+        contactsData.forEach(contact => {
+            contacts.set(contact.contactUsername, contact);
+        });
+        renderContactsList();
+    });
+    
+    socket.on("contact:added", ({ contact }) => {
+        contacts.set(contact.contactUsername, contact);
+        renderContactsList();
+    });
+    
+    socket.on("typing", ({ from }) => {
+        if (from === selectedUser) typingStatus.textContent = `${from} đang nhập...`;
+    });
+    
+    socket.on("stopTyping", ({ from }) => {
+        if (from === selectedUser) typingStatus.textContent = "";
+    });
+}
+
+// Xử lý tin nhắn từ lịch sử (hỗ trợ cả sent và received)
+async function handleHistoryMessage(msg, conversation) {
+    const isInbound = msg.from.toLowerCase() !== currentUser.toLowerCase();
+    
+    // Nếu là tin nhắn gửi đi, thử lấy plaintext từ local storage
+    if (!isInbound) {
+        const localPlaintext = getLocalMessagePlaintext(msg.messageId);
+        if (localPlaintext) {
+            const message = {
+                id: msg.messageId,
+                author: msg.from,
+                text: localPlaintext,
+                timestamp: new Date(msg.timestamp).getTime(),
+                inbound: false,
+                status: msg.status || "delivered"
+            };
+            conversation.push(message);
+            conversation.sort((a, b) => a.timestamp - b.timestamp);
+            if (selectedUser === getActiveConversation()) {
+                renderConversation(selectedUser);
+            }
+            return;
+        }
+    }
+    
+    // Nếu là tin nhắn nhận hoặc không tìm thấy plaintext local, giải mã
+    try {
+        const text = await cryptoUtils.decryptMessage(msg.encryptedMessage);
+        const message = {
+            id: msg.messageId,
+            author: msg.from,
+            text,
+            timestamp: new Date(msg.timestamp).getTime(),
+            inbound: isInbound,
+            status: msg.status || "delivered"
+        };
+        conversation.push(message);
+        conversation.sort((a, b) => a.timestamp - b.timestamp);
+        if (selectedUser === getActiveConversation()) {
+            renderConversation(selectedUser);
+        }
+    } catch (err) {
+        console.error("Lỗi giải mã tin nhắn lịch sử:", err);
+    }
+}
+
+// Lưu plaintext của tin nhắn đã gửi vào local storage
+const SENT_MESSAGES_STORAGE_KEY = "vaultchat-sent-messages";
+
+function saveSentMessagePlaintext(messageId, plaintext) {
+    try {
+        const stored = localStorage.getItem(SENT_MESSAGES_STORAGE_KEY);
+        const sentMessages = stored ? JSON.parse(stored) : {};
+        sentMessages[messageId] = plaintext;
+        localStorage.setItem(SENT_MESSAGES_STORAGE_KEY, JSON.stringify(sentMessages));
+    } catch (error) {
+        console.error("Lỗi lưu plaintext tin nhắn:", error);
+    }
+}
+
+function getLocalMessagePlaintext(messageId) {
+    try {
+        const stored = localStorage.getItem(SENT_MESSAGES_STORAGE_KEY);
+        if (!stored) return null;
+        const sentMessages = JSON.parse(stored);
+        return sentMessages[messageId] || null;
+    } catch (error) {
+        console.error("Lỗi đọc plaintext tin nhắn:", error);
+        return null;
+    }
 }
 
 function setLoginLoading(isLoading, message = "") {
@@ -527,18 +699,15 @@ function renderUserList() {
     userList.innerHTML = "";
     const filter = userFilterInput.value.trim().toLowerCase();
 
-    // Lấy danh sách users từ online và từ conversations đã lưu
+    // Chỉ hiển thị users đang online
     const onlineUsernames = usersOnline
         .map(entry => entry.username)
         .filter(username => username && username !== currentUser);
-    
-    const conversationUsernames = Array.from(conversations.keys())
-        .filter(username => username && username !== currentUser);
-    
-    // Kết hợp và loại bỏ trùng lặp
-    const allUsernames = [...new Set([...onlineUsernames, ...conversationUsernames])];
 
-    const filtered = allUsernames.filter(username => username.toLowerCase().includes(filter));
+    const filtered = onlineUsernames.filter(username => {
+        const displayName = userDisplayNames.get(username) || "";
+        return username.toLowerCase().includes(filter) || displayName.toLowerCase().includes(filter);
+    });
 
     userListEmpty.classList.toggle("hidden", filtered.length > 0);
 
@@ -550,14 +719,16 @@ function renderUserList() {
             return a.localeCompare(b);
         })
         .forEach(username => {
-            const contactEl = buildContactItem(username);
+            const contactEl = buildContactItem(username, true);
             userList.appendChild(contactEl);
         });
 
     refreshSelectionHighlight();
+    // Cập nhật danh sách liên hệ
+    renderRecentContacts();
 }
 
-function buildContactItem(username) {
+function buildContactItem(username, isOnlineList = false) {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "contact-item";
@@ -571,13 +742,29 @@ function buildContactItem(username) {
 
     const initial = document.createElement("span");
     initial.className = "contact-initial";
-    initial.textContent = username.charAt(0).toUpperCase();
+    const displayName = userDisplayNames.get(username);
+    initial.textContent = (displayName || username).charAt(0).toUpperCase();
 
+    // Tạo container cho tên
+    const nameContainer = document.createElement("div");
+    nameContainer.className = "contact-name-container";
+    
+    // Hiển thị display name (nếu có) hoặc username làm tên chính
     const name = document.createElement("span");
     name.className = "contact-name";
-    name.textContent = username;
+    name.textContent = displayName || username;
+    
+    // Hiển thị username bên dưới nếu có display name
+    if (displayName) {
+        const usernameSpan = document.createElement("span");
+        usernameSpan.className = "contact-username-small";
+        usernameSpan.textContent = `@${username}`;
+        nameContainer.append(name, usernameSpan);
+    } else {
+        nameContainer.appendChild(name);
+    }
 
-    userBlock.append(initial, name);
+    userBlock.append(initial, nameContainer);
 
     const meta = document.createElement("div");
     meta.className = "contact-meta";
@@ -590,26 +777,32 @@ function buildContactItem(username) {
 
     top.append(userBlock, meta);
 
-    const preview = document.createElement("div");
-    preview.className = "contact-preview";
-    const lastMessageText = getLastMessagePreview(username);
-    const previewText = document.createElement("span");
-    previewText.textContent = lastMessageText;
+    // Chỉ hiển thị preview cho danh sách liên hệ, không hiển thị cho danh sách online
+    if (!isOnlineList) {
+        const preview = document.createElement("div");
+        preview.className = "contact-preview";
+        const lastMessageText = getLastMessagePreview(username);
+        const previewText = document.createElement("span");
+        previewText.textContent = lastMessageText;
 
-    preview.appendChild(previewText);
+        preview.appendChild(previewText);
 
-    const unread = unreadCounts.get(username) || 0;
-    if (unread > 0) {
-        const badge = document.createElement("span");
-        badge.className = "badge";
-        badge.textContent = unread > 9 ? "9+" : unread.toString();
-        preview.appendChild(badge);
-        item.classList.add("unread");
+        const unread = unreadCounts.get(username) || 0;
+        if (unread > 0) {
+            const badge = document.createElement("span");
+            badge.className = "badge";
+            badge.textContent = unread > 9 ? "9+" : unread.toString();
+            preview.appendChild(badge);
+            item.classList.add("unread");
+        } else {
+            item.classList.remove("unread");
+        }
+
+        item.append(top, preview);
     } else {
-        item.classList.remove("unread");
+        item.appendChild(top);
     }
-
-    item.append(top, preview);
+    
     item.addEventListener("click", () => selectUser(username));
 
     return item;
@@ -619,6 +812,73 @@ function refreshSelectionHighlight() {
     userList.querySelectorAll(".contact-item").forEach(el => {
         el.classList.toggle("active", el.dataset.username === selectedUser);
     });
+    if (recentContactsList) {
+        recentContactsList.querySelectorAll(".contact-item").forEach(el => {
+            el.classList.toggle("active", el.dataset.username === selectedUser);
+        });
+    }
+}
+
+// Render danh sách liên hệ (người đã nhắn tin)
+async function renderRecentContacts() {
+    if (!recentContactsList) return;
+    
+    recentContactsList.innerHTML = "";
+    
+    // Lấy danh sách users từ conversations (người đã nhắn tin)
+    const contactUsernames = Array.from(conversations.keys())
+        .filter(username => username && username !== currentUser);
+    
+    // Loại bỏ những người đang online (vì họ đã có trong danh sách online)
+    const onlineUsernames = usersOnline.map(u => u.username);
+    const offlineContacts = contactUsernames.filter(username => !onlineUsernames.includes(username));
+    
+    if (offlineContacts.length === 0) {
+        recentContactsEmpty.classList.remove("hidden");
+        return;
+    }
+    
+    recentContactsEmpty.classList.add("hidden");
+    
+    // Fetch display names cho các contacts chưa có
+    if (authToken) {
+        const fetchPromises = offlineContacts
+            .filter(username => !userDisplayNames.has(username))
+            .map(async username => {
+                try {
+                    const response = await fetch(`/api/user/${encodeURIComponent(username)}/display-name`, {
+                        headers: {
+                            "Authorization": `Bearer ${authToken}`
+                        }
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.displayName) {
+                            userDisplayNames.set(username, data.displayName);
+                        }
+                    }
+                } catch (error) {
+                    console.error("Lỗi lấy display name:", error);
+                }
+            });
+        await Promise.all(fetchPromises);
+    }
+    
+    // Sắp xếp theo thời gian tin nhắn cuối
+    offlineContacts
+        .sort((a, b) => {
+            const convA = conversations.get(a) || [];
+            const convB = conversations.get(b) || [];
+            const lastMsgA = convA.length > 0 ? convA[convA.length - 1].timestamp : 0;
+            const lastMsgB = convB.length > 0 ? convB[convB.length - 1].timestamp : 0;
+            return lastMsgB - lastMsgA;
+        })
+        .forEach(username => {
+            const contactEl = buildContactItem(username, false);
+            recentContactsList.appendChild(contactEl);
+        });
+    
+    refreshSelectionHighlight();
 }
 
 function updateOnlineCount() {
@@ -635,11 +895,11 @@ function selectUser(username) {
     clearUnread(username);
     refreshSelectionHighlight();
 
-    chatWithName.textContent = `@${username}`;
+    updateChatHeader(username);
     typingStatus.textContent = "";
     conversationEmpty.classList.add("hidden");
 
-    // Tải lịch sử từ server
+    // Tải lịch sử từ server ngay khi click
     if (socket && socket.connected) {
         socket.emit("get:history", {
             username: currentUser,
@@ -648,10 +908,57 @@ function selectUser(username) {
         });
     }
 
+    // Render conversation hiện tại trước (có thể rỗng)
     renderConversation(username);
     updatePresenceMeta();
     updateComposerState();
     showConversationToast(username);
+}
+
+// Cập nhật chat header với display name và username
+async function updateChatHeader(username) {
+    let displayName = userDisplayNames.get(username) || null;
+    
+    // Nếu chưa có display name, thử lấy từ server
+    if (!displayName && authToken) {
+        try {
+            const response = await fetch(`/api/user/${encodeURIComponent(username)}/display-name`, {
+                headers: {
+                    "Authorization": `Bearer ${authToken}`
+                }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.displayName) {
+                    displayName = data.displayName;
+                    userDisplayNames.set(username, displayName);
+                }
+            }
+        } catch (error) {
+            console.error("Lỗi lấy display name:", error);
+        }
+    }
+    
+    // Xóa nội dung cũ
+    chatWithName.innerHTML = "";
+    
+    if (displayName) {
+        // Hiển thị display name làm text chính
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = displayName;
+        nameSpan.className = "chat-display-name";
+        
+        // Hiển thị username bên cạnh với font nhỏ hơn và mờ hơn
+        const usernameSpan = document.createElement("span");
+        usernameSpan.textContent = `@${username}`;
+        usernameSpan.className = "chat-username";
+        
+        chatWithName.appendChild(nameSpan);
+        chatWithName.appendChild(usernameSpan);
+    } else {
+        // Nếu chưa có display name, chỉ hiển thị username
+        chatWithName.textContent = `@${username}`;
+    }
 }
 
 function renderConversation(username) {
@@ -676,6 +983,8 @@ function addMessageToConversation(username, message) {
     conversation.sort((a, b) => a.timestamp - b.timestamp);
     updateMessageMetrics(conversation.length);
     updateContactPreview(username);
+    // Cập nhật danh sách liên hệ khi có tin nhắn mới
+    renderRecentContacts();
     // Không cần lưu vào localStorage nữa vì đã lưu vào MongoDB
 }
 
@@ -699,11 +1008,11 @@ function renderMessageBubble(message) {
         bubble.append(meta, content);
 
         if (!message.inbound) {
-            const status = document.createElement("span");
+            const status = document.createElement("div");
             status.className = `message-status ${message.status}`;
             status.dataset.role = "status";
             status.textContent = statusLabel(message.status);
-            content.appendChild(status);
+            bubble.appendChild(status);
         }
 
         messagesContainer.appendChild(bubble);
@@ -716,7 +1025,17 @@ function renderMessageBubble(message) {
 
 function updateMessageStatusBubble(bubble, status) {
     const statusEl = bubble.querySelector('[data-role="status"]');
-    if (!statusEl) return;
+    if (!statusEl) {
+        // Nếu chưa có status element, tạo mới
+        if (!bubble.classList.contains("inbound")) {
+            const statusDiv = document.createElement("div");
+            statusDiv.className = `message-status ${status}`;
+            statusDiv.dataset.role = "status";
+            statusDiv.textContent = statusLabel(status);
+            bubble.appendChild(statusDiv);
+        }
+        return;
+    }
     statusEl.className = `message-status ${status}`;
     statusEl.textContent = statusLabel(status);
 }
@@ -731,6 +1050,51 @@ function statusLabel(status) {
             return "Gửi thất bại";
         default:
             return "";
+    }
+}
+
+// Lưu display name lên server
+async function saveDisplayNameToServer(displayName) {
+    if (!authToken || !displayName) return;
+    try {
+        const response = await fetch("/api/display-name", {
+            method: "PUT",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${authToken}`
+            },
+            body: JSON.stringify({ displayName })
+        });
+        if (response.ok) {
+            const data = await response.json();
+            loggedInUser = data.user;
+        }
+    } catch (error) {
+        console.error("Lỗi lưu display name:", error);
+    }
+}
+
+// Cập nhật display name
+async function updateDisplayName(newDisplayName) {
+    if (!newDisplayName || !newDisplayName.trim()) {
+        showToast("Lỗi", "Tên hiển thị không được để trống", "error");
+        return;
+    }
+    
+    try {
+        await saveDisplayNameToServer(newDisplayName);
+        updateIdentityUI(newDisplayName);
+        if (socket && socket.connected) {
+            socket.emit("join", { 
+                username: currentUser, 
+                publicKey: await cryptoUtils.getPublicKeyJWK(), 
+                displayName: newDisplayName 
+            });
+        }
+        showToast("Thành công", "Đã cập nhật tên hiển thị", "success");
+    } catch (error) {
+        console.error("Lỗi cập nhật display name:", error);
+        showToast("Lỗi", "Không thể cập nhật tên hiển thị", "error");
     }
 }
 
@@ -826,6 +1190,9 @@ async function sendMessage() {
         inbound: false,
         status: "pending"
     };
+
+    // Lưu plaintext vào local storage để có thể đọc lại sau
+    saveSentMessagePlaintext(messageId, text);
 
     addMessageToConversation(selectedUser, outboundMessage);
     if (selectedUser === getActiveConversation()) {
