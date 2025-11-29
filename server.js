@@ -2,7 +2,7 @@
  * E2E Chat Server với MongoDB
  * Full version với offline messaging và contacts
  */
-
+// E:\n2n\server.jsa
 require("dotenv").config();
 const express = require("express");
 const http = require("http");
@@ -194,7 +194,13 @@ app.get(
       if (!user) {
         return res.status(404).json({ error: "User không tồn tại" });
       }
-      res.json({ user: { id: user._id, username: user.username, displayName: user.displayName } });
+      res.json({
+        user: {
+          id: user._id,
+          username: user.username,
+          displayName: user.displayName,
+        },
+      });
     } catch (error) {
       res.status(500).json({ error: "Lỗi server" });
     }
@@ -210,7 +216,9 @@ app.put(
     try {
       const { displayName } = req.body;
       if (!displayName || !displayName.trim()) {
-        return res.status(400).json({ error: "Tên hiển thị không được để trống" });
+        return res
+          .status(400)
+          .json({ error: "Tên hiển thị không được để trống" });
       }
 
       const user = await User.findByIdAndUpdate(
@@ -231,7 +239,13 @@ app.put(
         broadcastUsers();
       }
 
-      res.json({ user: { id: user._id, username: user.username, displayName: user.displayName } });
+      res.json({
+        user: {
+          id: user._id,
+          username: user.username,
+          displayName: user.displayName,
+        },
+      });
     } catch (error) {
       console.error("Lỗi cập nhật display name:", error);
       res.status(500).json({ error: "Lỗi server" });
@@ -246,13 +260,42 @@ app.get(
   async (req, res) => {
     try {
       const { username } = req.params;
-      const user = await User.findOne({ username: username.toLowerCase() }).select("username displayName");
+      const user = await User.findOne({
+        username: username.toLowerCase(),
+      }).select("username displayName");
       if (!user) {
         return res.status(404).json({ error: "User không tồn tại" });
       }
-      res.json({ username: user.username, displayName: user.displayName || null });
+      res.json({
+        username: user.username,
+        displayName: user.displayName || null,
+      });
     } catch (error) {
       console.error("Lỗi lấy display name:", error);
+      res.status(500).json({ error: "Lỗi server" });
+    }
+  }
+);
+
+// Lấy khóa công khai của một user (cho việc nhắn tin với user offline)
+app.get(
+  "/api/user/:username/public-key",
+  checkMongoConnection,
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const { username } = req.params;
+      const user = await User.findOne({
+        username: username.toLowerCase(),
+      }).select("username publicKey");
+      if (!user || !user.publicKey) {
+        return res
+          .status(404)
+          .json({ error: "User hoặc khóa công khai không tồn tại" });
+      }
+      res.json({ username: user.username, publicKey: user.publicKey });
+    } catch (error) {
+      console.error("Lỗi lấy khóa công khai:", error);
       res.status(500).json({ error: "Lỗi server" });
     }
   }
@@ -268,7 +311,9 @@ async function getUsersSnapshot() {
     // Nếu chưa có displayName trong memory, lấy từ DB
     if (!displayName && isMongoConnected()) {
       try {
-        const user = await User.findOne({ username: username.toLowerCase() }).select("displayName");
+        const user = await User.findOne({
+          username: username.toLowerCase(),
+        }).select("displayName");
         if (user && user.displayName) {
           displayName = user.displayName;
           // Cập nhật vào memory
@@ -304,7 +349,11 @@ io.on("connection", (socket) => {
   socket.on("join", async ({ username, publicKey, displayName }) => {
     if (!username || !publicKey) return;
 
-    users.set(username, { socketId: socket.id, publicKey, displayName: displayName || null });
+    users.set(username, {
+      socketId: socket.id,
+      publicKey,
+      displayName: displayName || null,
+    });
 
     // Kiểm tra MongoDB connection
     if (!isMongoConnected()) {
